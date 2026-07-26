@@ -1,4 +1,5 @@
 export type MoodPreset = "late-night" | "rainy" | "sunset";
+
 export type EngineSnapshot = {
   chord: string;
   nextChord: string;
@@ -17,33 +18,42 @@ export type EngineSettings = {
   preset: MoodPreset;
 };
 
+type Section = "intro" | "groove" | "bloom" | "break" | "return";
 type Chord = {
-  name: string;
+  root: number;
+  suffix: string;
   degrees: number[];
   bass: number;
   next: Array<[number, number]>;
 };
-
-type Section = "intro" | "groove" | "bloom" | "break" | "return";
+type PhrasePlan = {
+  rhythm: number[];
+  motif: number[];
+  response: number[];
+  activeBars: Set<number>;
+};
 
 const CHORDS: Chord[] = [
-  { name: "Cmaj9", degrees: [0, 4, 7, 11, 14], bass: 36, next: [[1, 2], [2, 4], [3, 4], [5, 2], [6, 2]] },
-  { name: "C♯dim7", degrees: [1, 4, 7, 10], bass: 37, next: [[2, 10]] },
-  { name: "Dm9", degrees: [2, 5, 9, 12, 16], bass: 38, next: [[3, 3], [5, 5], [6, 3], [7, 2]] },
-  { name: "Fmaj9", degrees: [5, 9, 12, 16, 19], bass: 41, next: [[0, 4], [4, 5], [5, 2], [6, 2]] },
-  { name: "Fm6", degrees: [5, 8, 12, 14], bass: 41, next: [[0, 10], [8, 2]] },
-  { name: "G13sus", degrees: [7, 12, 14, 17, 21], bass: 43, next: [[0, 8], [4, 2]] },
-  { name: "Am9", degrees: [9, 12, 16, 19, 23], bass: 45, next: [[2, 4], [3, 3], [5, 3], [7, 2]] },
-  { name: "Gm9", degrees: [7, 10, 14, 17, 21], bass: 43, next: [[8, 9], [3, 2]] },
-  { name: "C13", degrees: [0, 4, 10, 14, 21], bass: 36, next: [[3, 10], [4, 1]] },
-  { name: "Em7/A", degrees: [4, 7, 11, 14], bass: 45, next: [[2, 5], [6, 4], [5, 2]] },
+  { root: 0, suffix: "maj9", degrees: [0, 4, 7, 11, 14], bass: 36, next: [[1, 2], [2, 5], [3, 4], [5, 2], [6, 3], [9, 2]] },
+  { root: 1, suffix: "dim7", degrees: [1, 4, 7, 10], bass: 37, next: [[2, 12]] },
+  { root: 2, suffix: "m9", degrees: [2, 5, 9, 12, 16], bass: 38, next: [[3, 3], [5, 6], [6, 3], [7, 2], [9, 2]] },
+  { root: 5, suffix: "maj9", degrees: [5, 9, 12, 16, 19], bass: 41, next: [[0, 5], [4, 6], [5, 2], [6, 2]] },
+  { root: 5, suffix: "m6", degrees: [5, 8, 12, 14], bass: 41, next: [[0, 12], [8, 2]] },
+  { root: 7, suffix: "13sus", degrees: [7, 12, 14, 17, 21], bass: 43, next: [[0, 9], [4, 2]] },
+  { root: 9, suffix: "m9", degrees: [9, 12, 16, 19, 23], bass: 45, next: [[2, 4], [3, 3], [5, 3], [7, 2], [9, 2]] },
+  { root: 7, suffix: "m9", degrees: [7, 10, 14, 17, 21], bass: 43, next: [[8, 10], [3, 2]] },
+  { root: 0, suffix: "13", degrees: [0, 4, 10, 14, 21], bass: 36, next: [[3, 11], [4, 1]] },
+  { root: 9, suffix: "11", degrees: [9, 14, 16, 19, 23], bass: 45, next: [[2, 5], [6, 4], [5, 2]] },
+  { root: 4, suffix: "m9", degrees: [4, 7, 11, 14, 18], bass: 40, next: [[6, 5], [3, 3], [9, 2]] },
+  { root: 11, suffix: "7alt", degrees: [11, 15, 18, 21, 26], bass: 47, next: [[10, 9], [6, 4]] },
 ];
 
+const NOTE_NAMES = ["C", "D♭", "D", "E♭", "E", "F", "G♭", "G", "A♭", "A", "B♭", "B"];
 const SECTION_NAMES: Record<Section, string> = {
   intro: "INTRO",
   groove: "GROOVE",
   bloom: "BLOOM",
-  break: "BREAK",
+  break: "BREATH",
   return: "RETURN",
 };
 
@@ -68,18 +78,20 @@ export class ChillEngine {
   private musicBus: GainNode | null = null;
   private textureBus: GainNode | null = null;
   private delay: DelayNode | null = null;
-  private feedback: GainNode | null = null;
+  private delaySend: GainNode | null = null;
   private timer: number | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
   private chordIndex = 0;
   private nextChordIndex = 2;
   private nextTime = 0;
   private bar = 0;
   private section: Section = "intro";
   private sectionBars = 0;
+  private keyShift = 0;
+  private chapter = 0;
   private previousVoicing: number[] = [];
-  private motif = [4, 7, 9, 7];
   private recentChords: number[] = [];
-  private noiseBuffer: AudioBuffer | null = null;
+  private phrase: PhrasePlan = this.createPhrase();
   private settings: EngineSettings = {
     energy: 0.32,
     warmth: 0.76,
@@ -94,10 +106,10 @@ export class ChillEngine {
   setSettings(settings: EngineSettings): void {
     this.settings = settings;
     if (this.master && this.context) {
-      this.master.gain.setTargetAtTime(settings.volume * 0.42, this.context.currentTime, 0.05);
+      this.master.gain.setTargetAtTime(settings.volume * 0.38, this.context.currentTime, 0.08);
     }
     if (this.textureBus && this.context) {
-      this.textureBus.gain.setTargetAtTime(settings.texture * 0.16, this.context.currentTime, 0.2);
+      this.textureBus.gain.setTargetAtTime(settings.texture * 0.12, this.context.currentTime, 0.3);
     }
   }
 
@@ -109,35 +121,42 @@ export class ChillEngine {
     this.master = this.context.createGain();
     this.musicBus = this.context.createGain();
     this.textureBus = this.context.createGain();
+    this.delay = this.context.createDelay(2);
+    this.delaySend = this.context.createGain();
+
+    const feedback = this.context.createGain();
+    const delayFilter = this.context.createBiquadFilter();
     const compressor = this.context.createDynamicsCompressor();
     const masterFilter = this.context.createBiquadFilter();
-    masterFilter.type = "lowpass";
-    masterFilter.frequency.value = 15000;
-    compressor.threshold.value = -18;
-    compressor.knee.value = 18;
-    compressor.ratio.value = 3;
-    compressor.attack.value = 0.02;
-    compressor.release.value = 0.35;
 
-    this.master.gain.value = this.settings.volume * 0.42;
+    this.master.gain.value = this.settings.volume * 0.38;
     this.musicBus.gain.value = 1;
-    this.textureBus.gain.value = this.settings.texture * 0.16;
+    this.textureBus.gain.value = this.settings.texture * 0.12;
+    this.delay.delayTime.value = 0.38;
+    this.delaySend.gain.value = 0.28;
+    feedback.gain.value = 0.26;
+    delayFilter.type = "lowpass";
+    delayFilter.frequency.value = 2600;
+    masterFilter.type = "lowpass";
+    masterFilter.frequency.value = 14500;
+    compressor.threshold.value = -20;
+    compressor.knee.value = 22;
+    compressor.ratio.value = 2.6;
+    compressor.attack.value = 0.025;
+    compressor.release.value = 0.42;
+
+    this.delaySend.connect(this.delay);
+    this.delay.connect(delayFilter).connect(feedback).connect(this.delay);
+    delayFilter.connect(this.musicBus);
     this.musicBus.connect(masterFilter);
     this.textureBus.connect(masterFilter);
     masterFilter.connect(compressor).connect(this.master).connect(this.context.destination);
 
-    this.delay = this.context.createDelay(1.5);
-    this.delay.delayTime.value = 0.32;
-    this.feedback = this.context.createGain();
-    this.feedback.gain.value = 0.2;
-    this.delay.connect(this.feedback).connect(this.delay);
-    this.delay.connect(this.musicBus);
-
-    this.noiseBuffer = this.makeNoiseBuffer(4);
+    this.noiseBuffer = this.makeNoiseBuffer(6);
     this.startTexture();
-    this.nextTime = this.context.currentTime + 0.08;
+    this.nextTime = this.context.currentTime + 0.1;
     this.schedule();
-    this.timer = window.setInterval(() => this.schedule(), 100);
+    this.timer = window.setInterval(() => this.schedule(), 90);
   }
 
   stop(): void {
@@ -148,22 +167,26 @@ export class ChillEngine {
     this.master = null;
     this.musicBus = null;
     this.textureBus = null;
+    this.delay = null;
+    this.delaySend = null;
     this.noiseBuffer = null;
   }
 
   regenerate(): void {
-    this.motif = this.createMotif();
+    this.phrase = this.createPhrase();
     this.nextChordIndex = weightedChoice(CHORDS[this.chordIndex]!.next);
     this.section = "bloom";
     this.sectionBars = 0;
+    if (Math.random() < 0.45) this.keyShift = choose([0, 2, 5, -3]);
   }
 
   private schedule(): void {
     if (!this.context) return;
     const presetOffset = this.settings.preset === "sunset" ? 4 : this.settings.preset === "rainy" ? -3 : 0;
-    const bpm = Math.round(66 + this.settings.energy * 20 + presetOffset);
+    const breathing = Math.sin(this.bar / 12) * 1.4;
+    const bpm = Math.round(65 + this.settings.energy * 19 + presetOffset + breathing);
     const beat = 60 / bpm;
-    while (this.nextTime < this.context.currentTime + 1.5) {
+    while (this.nextTime < this.context.currentTime + 1.8) {
       this.scheduleBar(this.nextTime, beat);
       this.nextTime += beat * 4;
     }
@@ -172,42 +195,67 @@ export class ChillEngine {
   private scheduleBar(time: number, beat: number): void {
     const chord = CHORDS[this.chordIndex]!;
     const nextChord = CHORDS[this.nextChordIndex]!;
+    const phraseBar = this.bar % 8;
+    const arc = this.dynamicArc(phraseBar);
+    const density = this.sectionDensity() * arc;
+
     this.onSnapshot({
-      chord: chord.name,
-      nextChord: nextChord.name,
-      key: "C major / A minor",
+      chord: this.chordName(chord),
+      nextChord: this.chordName(nextChord),
+      key: `${NOTE_NAMES[(12 + this.keyShift) % 12]} major / ${NOTE_NAMES[(21 + this.keyShift) % 12]} minor`,
       bpm: Math.round(60 / beat),
       section: SECTION_NAMES[this.section],
       bar: this.bar + 1,
     });
 
     const voicing = this.chooseVoicing(chord);
-    const sectionDensity = this.section === "intro" ? 0.55 : this.section === "break" ? 0.35 : this.section === "bloom" ? 1.12 : 1;
-    this.playPad(voicing, time, beat * 3.92, sectionDensity);
-    this.playBassLine(chord, nextChord, time, beat, sectionDensity);
-    this.playMotif(chord, time, beat, sectionDensity);
-    this.playPercussion(time, beat, sectionDensity);
+    const isBreath = this.section === "break" || !this.phrase.activeBars.has(phraseBar);
+
+    this.playPad(voicing, time, beat * 3.94, density * (isBreath ? 0.72 : 1));
+    if (!isBreath || Math.random() < 0.35) this.playBassLine(chord, nextChord, time, beat, density);
+    if (!isBreath) {
+      this.playPhrase(chord, time, beat, density, phraseBar);
+      this.playComping(voicing, time, beat, density, phraseBar);
+    }
+    this.playPercussion(time, beat, density, phraseBar, isBreath);
 
     this.previousVoicing = voicing;
     this.bar += 1;
     this.sectionBars += 1;
+    if (this.bar % 8 === 0) this.phrase = this.evolvePhrase(this.phrase);
+    if (this.bar % 32 === 0) this.advanceChapter();
     this.advanceForm();
     this.advanceHarmony();
+  }
+
+  private dynamicArc(phraseBar: number): number {
+    const arc = [0.72, 0.82, 0.9, 0.78, 0.88, 0.98, 1.08, 0.68];
+    return arc[phraseBar]! * (0.82 + this.settings.energy * 0.28);
+  }
+
+  private sectionDensity(): number {
+    const values: Record<Section, number> = { intro: 0.54, groove: 0.92, bloom: 1.12, break: 0.38, return: 0.84 };
+    return values[this.section];
   }
 
   private advanceHarmony(): void {
     this.chordIndex = this.nextChordIndex;
     const chord = CHORDS[this.chordIndex]!;
-    let candidates = chord.next;
-    if (this.recentChords.slice(-3).includes(this.chordIndex)) {
-      candidates = candidates.map(([index, weight]) => [index, index === this.chordIndex ? weight * 0.1 : weight] as [number, number]);
+    let candidates = chord.next.map(([index, weight]) => [index, weight] as [number, number]);
+
+    candidates = candidates.map(([index, weight]) => {
+      const repeatPenalty = this.recentChords.slice(-4).includes(index) ? 0.42 : 1;
+      const cadenceBonus = this.bar % 8 === 7 && index === 0 ? 2.8 : 1;
+      return [index, weight * repeatPenalty * cadenceBonus] as [number, number];
+    });
+
+    if (Math.random() < this.settings.variation * 0.08) {
+      candidates.push([Math.floor(Math.random() * CHORDS.length), 0.65]);
     }
-    if (Math.random() < this.settings.variation * 0.12) {
-      candidates = [...candidates, [Math.floor(Math.random() * CHORDS.length), 1]];
-    }
+
     this.nextChordIndex = weightedChoice(candidates);
     this.recentChords.push(this.chordIndex);
-    this.recentChords = this.recentChords.slice(-12);
+    this.recentChords = this.recentChords.slice(-16);
   }
 
   private advanceForm(): void {
@@ -222,42 +270,74 @@ export class ChillEngine {
     };
     this.section = choose(transitions[this.section]);
     this.sectionBars = 0;
-    if (Math.random() < 0.65) this.motif = this.mutateMotif(this.motif);
+  }
+
+  private advanceChapter(): void {
+    this.chapter += 1;
+    const shifts = this.settings.preset === "rainy" ? [0, -3, 5] : [0, 2, 5, -3];
+    if (Math.random() < 0.5 + this.settings.variation * 0.3) {
+      const options = shifts.filter(shift => shift !== this.keyShift);
+      this.keyShift = choose(options);
+      this.previousVoicing = [];
+    }
+    this.section = this.chapter % 3 === 0 ? "break" : "intro";
+    this.sectionBars = 0;
+  }
+
+  private createPhrase(): PhrasePlan {
+    const palette = [0, 2, 4, 7, 9, 11, 14];
+    const motif = [choose(palette)];
+    while (motif.length < 4) {
+      const previous = motif.at(-1)!;
+      const nearby = palette.filter(note => Math.abs(note - previous) <= 5);
+      motif.push(choose(nearby.length ? nearby : palette));
+    }
+    const response = [...motif].reverse().map((note, index) => clamp(note + (index === 0 ? -2 : index === 3 ? 2 : 0), -2, 16));
+    return {
+      motif,
+      response,
+      rhythm: choose([
+        [0.5, 1.5, 2.5, 3.25],
+        [0.75, 1.75, 2.75],
+        [0.25, 1.25, 2, 3.5],
+        [1, 2.25, 3.25],
+      ]),
+      activeBars: new Set(choose([[0, 1, 2, 4, 5, 6], [0, 2, 3, 4, 6], [1, 2, 4, 5, 7]])),
+    };
+  }
+
+  private evolvePhrase(phrase: PhrasePlan): PhrasePlan {
+    const motif = [...phrase.motif];
+    const index = Math.floor(Math.random() * motif.length);
+    motif[index] = clamp(motif[index]! + choose([-2, -1, 1, 2]), -2, 16);
+    if (Math.random() < this.settings.variation * 0.22) motif.reverse();
+    return {
+      motif,
+      response: [...motif].reverse().map((note, i) => clamp(note + (i === 3 ? 2 : 0), -2, 16)),
+      rhythm: Math.random() < 0.68 ? phrase.rhythm : this.createPhrase().rhythm,
+      activeBars: Math.random() < 0.72 ? phrase.activeBars : this.createPhrase().activeBars,
+    };
+  }
+
+  private chordName(chord: Chord): string {
+    return `${NOTE_NAMES[(chord.root + this.keyShift + 12) % 12]}${chord.suffix}`;
   }
 
   private chooseVoicing(chord: Chord): number[] {
     const candidates: number[][] = [];
-    for (let inversion = 0; inversion < chord.degrees.length; inversion += 1) {
-      const notes = chord.degrees.map((degree, index) => 55 + degree + (index < inversion ? 12 : 0));
-      for (const octave of [-12, 0, 12]) candidates.push(notes.map(note => note + octave).filter(note => note >= 48 && note <= 81));
+    const shifted = chord.degrees.map(degree => degree + this.keyShift);
+    for (let inversion = 0; inversion < shifted.length; inversion += 1) {
+      const notes = shifted.map((degree, index) => 55 + degree + (index < inversion ? 12 : 0));
+      for (const octave of [-12, 0, 12]) {
+        const candidate = notes.map(note => note + octave).filter(note => note >= 48 && note <= 82);
+        if (candidate.length >= 4) candidates.push(candidate);
+      }
     }
-    if (!this.previousVoicing.length) return candidates.find(notes => notes.length >= 4) ?? candidates[0]!;
-    return candidates.reduce((best, candidate) => {
-      const cost = candidate.reduce((sum, note) => sum + Math.min(...this.previousVoicing.map(previous => Math.abs(previous - note))), 0)
-        + Math.abs(candidate.length - this.previousVoicing.length) * 3;
-      const bestCost = best.reduce((sum, note) => sum + Math.min(...this.previousVoicing.map(previous => Math.abs(previous - note))), 0)
-        + Math.abs(best.length - this.previousVoicing.length) * 3;
-      return cost < bestCost ? candidate : best;
-    }, candidates[0]!);
-  }
-
-  private createMotif(): number[] {
-    const palette = [0, 2, 4, 7, 9, 11, 14];
-    const result = [choose(palette)];
-    while (result.length < 4) {
-      const previous = result.at(-1)!;
-      const nearby = palette.filter(note => Math.abs(note - previous) <= 5);
-      result.push(choose(nearby.length ? nearby : palette));
-    }
-    return result;
-  }
-
-  private mutateMotif(motif: number[]): number[] {
-    const result = [...motif];
-    const index = Math.floor(Math.random() * result.length);
-    result[index] = clamp(result[index]! + choose([-2, -1, 1, 2]), -2, 16);
-    if (Math.random() < this.settings.variation * 0.3) result.reverse();
-    return result;
+    if (!this.previousVoicing.length) return candidates[0]!;
+    const cost = (candidate: number[]): number => candidate.reduce((sum, note) => {
+      return sum + Math.min(...this.previousVoicing.map(previous => Math.abs(previous - note)));
+    }, 0) + Math.abs(candidate.length - this.previousVoicing.length) * 3;
+    return candidates.reduce((best, candidate) => cost(candidate) < cost(best) ? candidate : best, candidates[0]!);
   }
 
   private playPad(notes: number[], time: number, duration: number, density: number): void {
@@ -266,42 +346,55 @@ export class ChillEngine {
     const filter = this.context.createBiquadFilter();
     const pan = this.context.createStereoPanner();
     filter.type = "lowpass";
-    filter.frequency.value = 620 + (1 - this.settings.warmth) * 2400 + this.settings.energy * 350;
-    filter.Q.value = 0.35;
-    pan.pan.value = random(-0.12, 0.12);
+    filter.frequency.value = 560 + (1 - this.settings.warmth) * 2500 + this.settings.energy * 420;
+    filter.Q.value = 0.3;
+    pan.pan.value = random(-0.16, 0.16);
     bus.gain.setValueAtTime(0.0001, time);
-    bus.gain.exponentialRampToValueAtTime(0.055 * density, time + 0.3);
+    bus.gain.exponentialRampToValueAtTime(0.046 * density, time + 0.42);
     bus.gain.exponentialRampToValueAtTime(0.0001, time + duration);
     bus.connect(filter).connect(pan).connect(this.musicBus);
-    if (this.delay) filter.connect(this.delay);
+    if (this.delaySend) filter.connect(this.delaySend);
 
     notes.forEach((note, index) => {
       const osc = this.context!.createOscillator();
-      const shimmer = this.context!.createOscillator();
-      const shimmerGain = this.context!.createGain();
+      const air = this.context!.createOscillator();
+      const airGain = this.context!.createGain();
       osc.type = index % 2 ? "triangle" : "sine";
       osc.frequency.value = midiToHz(note);
-      osc.detune.value = (index - notes.length / 2) * 2.4;
-      shimmer.type = "sine";
-      shimmer.frequency.value = midiToHz(note + 12);
-      shimmerGain.gain.value = 0.08;
+      osc.detune.value = (index - notes.length / 2) * 2.1;
+      air.type = "sine";
+      air.frequency.value = midiToHz(note + 12);
+      airGain.gain.value = 0.055;
       osc.connect(bus);
-      shimmer.connect(shimmerGain).connect(bus);
-      osc.start(time + random(0, 0.018));
-      shimmer.start(time + random(0, 0.02));
-      osc.stop(time + duration + 0.08);
-      shimmer.stop(time + duration + 0.08);
+      air.connect(airGain).connect(bus);
+      osc.start(time + random(0, 0.025));
+      air.start(time + random(0, 0.028));
+      osc.stop(time + duration + 0.1);
+      air.stop(time + duration + 0.1);
+    });
+  }
+
+  private playComping(notes: number[], time: number, beat: number, density: number, phraseBar: number): void {
+    if (this.section === "intro" || this.section === "break") return;
+    const patterns = [[1.5, 3.25], [0.75, 2.75], [1, 2.5, 3.5]];
+    const pattern = patterns[phraseBar % patterns.length]!;
+    pattern.forEach((offset, index) => {
+      if (Math.random() > 0.35 + this.settings.energy * 0.35) return;
+      const selected = notes.filter((_, noteIndex) => noteIndex !== 0 || index % 2 === 0);
+      selected.forEach((note, noteIndex) => this.playKey(note + (noteIndex > 2 ? 0 : 12), time + offset * beat, beat * 0.2, 0.008 * density));
     });
   }
 
   private playBassLine(chord: Chord, nextChord: Chord, time: number, beat: number, density: number): void {
-    this.playBass(chord.bass, time, beat * 1.45, 0.12 * density);
-    if (this.section !== "break" && Math.random() < 0.28 + this.settings.energy * 0.35) {
-      this.playBass(chord.bass + choose([0, 7, 12]), time + beat * 2, beat * 0.75, 0.065 * density);
+    const root = chord.bass + this.keyShift;
+    const nextRoot = nextChord.bass + this.keyShift;
+    this.playBass(root, time, beat * 1.35, 0.1 * density);
+    if (this.section !== "break" && Math.random() < 0.3 + this.settings.energy * 0.34) {
+      this.playBass(root + choose([0, 7, 12]), time + beat * 2, beat * 0.7, 0.052 * density);
     }
-    if (Math.random() < 0.38 + this.settings.variation * 0.28) {
-      const direction = Math.sign(nextChord.bass - chord.bass) || 1;
-      this.playBass(nextChord.bass - direction, time + beat * 3.5, beat * 0.38, 0.045 * density);
+    if (Math.random() < 0.42 + this.settings.variation * 0.25) {
+      const direction = Math.sign(nextRoot - root) || 1;
+      this.playBass(nextRoot - direction, time + beat * 3.5, beat * 0.34, 0.038 * density);
     }
   }
 
@@ -313,32 +406,27 @@ export class ChillEngine {
     osc.type = "sine";
     osc.frequency.value = midiToHz(note);
     filter.type = "lowpass";
-    filter.frequency.value = 150 + this.settings.energy * 70;
+    filter.frequency.value = 145 + this.settings.energy * 75;
     gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(volume, time + 0.018);
+    gain.gain.exponentialRampToValueAtTime(volume, time + 0.02);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
     osc.connect(filter).connect(gain).connect(this.musicBus);
     osc.start(time);
     osc.stop(time + duration + 0.05);
   }
 
-  private playMotif(chord: Chord, time: number, beat: number, density: number): void {
-    const chance = (0.28 + this.settings.energy * 0.38) * density;
-    const root = 60 + chord.degrees[0]!;
-    const rhythm = choose([
-      [0.5, 1.5, 2.5, 3.25],
-      [0.75, 1.75, 2.75],
-      [0.25, 1.25, 2.0, 3.5],
-      [1.0, 2.5, 3.25],
-    ]);
-    rhythm.forEach((offset, index) => {
+  private playPhrase(chord: Chord, time: number, beat: number, density: number, phraseBar: number): void {
+    const notes = phraseBar < 4 ? this.phrase.motif : this.phrase.response;
+    const chance = 0.52 + this.settings.energy * 0.28;
+    const root = 60 + chord.root + this.keyShift;
+    this.phrase.rhythm.forEach((offset, index) => {
       if (Math.random() > chance) return;
-      const motifNote = this.motif[index % this.motif.length]!;
-      const chordTone = chord.degrees.reduce((best, degree) => Math.abs(degree - motifNote) < Math.abs(best - motifNote) ? degree : best, chord.degrees[0]!);
-      const useColorTone = Math.random() < 0.42;
-      const note = root + (useColorTone ? motifNote : chordTone) + 12;
-      const swing = index % 2 ? beat * 0.055 : 0;
-      this.playKey(note, time + offset * beat + swing + random(-0.012, 0.012), beat * choose([0.34, 0.5, 0.78]), 0.042 * density);
+      const target = notes[index % notes.length]!;
+      const chordTone = chord.degrees.reduce((best, degree) => Math.abs(degree - target) < Math.abs(best - target) ? degree : best, chord.degrees[0]!);
+      const useColor = Math.random() < 0.34 + this.settings.variation * 0.25;
+      const note = root + (useColor ? target : chordTone) + 12;
+      const swing = index % 2 ? beat * 0.052 : 0;
+      this.playKey(note, time + offset * beat + swing + random(-0.014, 0.014), beat * choose([0.32, 0.48, 0.72]), 0.034 * density);
     });
   }
 
@@ -353,37 +441,40 @@ export class ChillEngine {
     carrier.type = "triangle";
     carrier.frequency.value = midiToHz(note);
     overtone.type = "sine";
-    overtone.frequency.value = midiToHz(note) * 2.01;
-    overtoneGain.gain.value = 0.13;
+    overtone.frequency.value = midiToHz(note) * 2.005;
+    overtoneGain.gain.value = 0.11;
     filter.type = "lowpass";
-    filter.frequency.value = 1300 + (1 - this.settings.warmth) * 2600;
-    pan.pan.value = random(-0.3, 0.3);
+    filter.frequency.value = 1150 + (1 - this.settings.warmth) * 3000;
+    pan.pan.value = random(-0.34, 0.34);
     gain.gain.setValueAtTime(0.0001, time);
     gain.gain.exponentialRampToValueAtTime(volume, time + 0.012);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
     carrier.connect(gain);
     overtone.connect(overtoneGain).connect(gain);
     gain.connect(filter).connect(pan).connect(this.musicBus);
-    if (this.delay) filter.connect(this.delay);
+    if (this.delaySend) filter.connect(this.delaySend);
     carrier.start(time);
     overtone.start(time);
-    carrier.stop(time + duration + 0.05);
-    overtone.stop(time + duration + 0.05);
+    carrier.stop(time + duration + 0.06);
+    overtone.stop(time + duration + 0.06);
   }
 
-  private playPercussion(time: number, beat: number, density: number): void {
-    if (this.section === "intro" || this.section === "break") {
-      if (Math.random() < 0.5) this.hitNoise(time + beat * 3, 0.035, 0.012 * density, 3200);
+  private playPercussion(time: number, beat: number, density: number, phraseBar: number, isBreath: boolean): void {
+    if (isBreath || this.section === "intro") {
+      if (Math.random() < 0.4) this.hitNoise(time + beat * 3, 0.04, 0.009 * density, 3400);
       return;
     }
-    this.playKick(time, 0.11 * density);
-    if (Math.random() < 0.48 + this.settings.energy * 0.35) this.playKick(time + beat * 2.5, 0.065 * density);
-    [1, 3].forEach(step => this.hitNoise(time + step * beat + 0.022, 0.12, 0.03 * density, 1150));
+    this.playKick(time, 0.09 * density);
+    if (phraseBar % 2 === 1 && Math.random() < 0.45 + this.settings.energy * 0.3) this.playKick(time + beat * 2.5, 0.05 * density);
+    [1, 3].forEach(step => this.hitNoise(time + step * beat + 0.024, 0.12, 0.024 * density, 1100));
     for (let eighth = 0; eighth < 8; eighth += 1) {
-      if (Math.random() < (0.35 + this.settings.energy * 0.42) * density) {
-        const swing = eighth % 2 ? beat * 0.055 : 0;
-        this.hitNoise(time + eighth * beat / 2 + swing, 0.012, random(0.004, 0.009) * density, 5200);
+      if (Math.random() < (0.3 + this.settings.energy * 0.38) * density) {
+        const swing = eighth % 2 ? beat * 0.052 : 0;
+        this.hitNoise(time + eighth * beat / 2 + swing, 0.012, random(0.003, 0.007) * density, 5100);
       }
+    }
+    if (phraseBar === 7 && Math.random() < 0.55) {
+      [3.25, 3.5, 3.75].forEach((offset, index) => this.hitNoise(time + offset * beat, 0.02, (0.006 + index * 0.002) * density, 2600 + index * 700));
     }
   }
 
@@ -392,13 +483,13 @@ export class ChillEngine {
     const osc = this.context.createOscillator();
     const gain = this.context.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(115, time);
-    osc.frequency.exponentialRampToValueAtTime(48, time + 0.11);
+    osc.frequency.setValueAtTime(105, time);
+    osc.frequency.exponentialRampToValueAtTime(46, time + 0.12);
     gain.gain.setValueAtTime(volume, time);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.22);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.24);
     osc.connect(gain).connect(this.musicBus);
     osc.start(time);
-    osc.stop(time + 0.23);
+    osc.stop(time + 0.25);
   }
 
   private hitNoise(time: number, duration: number, volume: number, frequency: number): void {
@@ -409,11 +500,11 @@ export class ChillEngine {
     source.buffer = this.noiseBuffer;
     filter.type = "bandpass";
     filter.frequency.value = frequency;
-    filter.Q.value = 0.7;
+    filter.Q.value = 0.75;
     gain.gain.setValueAtTime(volume, time);
     gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
     source.connect(filter).connect(gain).connect(this.musicBus);
-    source.start(time, random(0, 2));
+    source.start(time, random(0, 3));
     source.stop(time + duration);
   }
 
@@ -424,8 +515,8 @@ export class ChillEngine {
     let previous = 0;
     for (let index = 0; index < data.length; index += 1) {
       const white = Math.random() * 2 - 1;
-      previous = previous * 0.985 + white * 0.015;
-      data[index] = previous * 3.2;
+      previous = previous * 0.986 + white * 0.014;
+      data[index] = previous * 3.1;
     }
     return buffer;
   }
@@ -434,12 +525,18 @@ export class ChillEngine {
     if (!this.context || !this.textureBus || !this.noiseBuffer) return;
     const source = this.context.createBufferSource();
     const filter = this.context.createBiquadFilter();
+    const modulation = this.context.createOscillator();
+    const modulationGain = this.context.createGain();
     source.buffer = this.noiseBuffer;
     source.loop = true;
     filter.type = "bandpass";
-    filter.frequency.value = this.settings.preset === "rainy" ? 2600 : 1450;
-    filter.Q.value = 0.35;
+    filter.frequency.value = this.settings.preset === "rainy" ? 2800 : 1350;
+    filter.Q.value = 0.32;
+    modulation.frequency.value = 0.08;
+    modulationGain.gain.value = 220;
+    modulation.connect(modulationGain).connect(filter.frequency);
     source.connect(filter).connect(this.textureBus);
     source.start();
+    modulation.start();
   }
 }
