@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#101713" />
-    <meta name="description" content="ブラウザで無限に生成されるチルミュージック" />
+    <meta name="theme-color" content="#0b110e" />
+    <meta name="description" content="ブラウザがリアルタイムで作り続ける、終わりのないチルミュージック" />
     <title>E-chill — Endless generative chill</title>
   </head>
   <body>
@@ -12,23 +12,47 @@
       <header>
         <p class="eyebrow">ENDLESS GENERATIVE AUDIO</p>
         <h1>E-chill</h1>
-        <p class="lead">同じ曲には、二度と戻らない。</p>
+        <p class="lead">記憶し、変化し、静かに続いていく。</p>
       </header>
-      <section class="player" aria-label="音楽プレイヤー">
-        <div class="orb" id="orb" aria-hidden="true"><span></span></div>
-        <button id="toggle" class="toggle" type="button">再生する</button>
+
+      <section class="stage" aria-label="音楽プレイヤー">
+        <div class="orb-wrap">
+          <div class="orbit orbit-a"></div>
+          <div class="orbit orbit-b"></div>
+          <div class="orb" id="orb" aria-hidden="true"><span></span></div>
+        </div>
+        <div class="transport">
+          <button id="toggle" class="toggle" type="button">再生する</button>
+          <button id="regenerate" class="regenerate" type="button" aria-label="新しい展開を生成">↻</button>
+        </div>
         <p id="status" class="status">クリックして音を開始</p>
       </section>
-      <section class="controls" aria-label="生成設定">
-        <label><span>Energy</span><input id="energy" type="range" min="0" max="100" value="32" /></label>
-        <label><span>Warmth</span><input id="warmth" type="range" min="0" max="100" value="76" /></label>
-        <label><span>Variation</span><input id="variation" type="range" min="0" max="100" value="38" /></label>
+
+      <section class="presets" aria-label="ムードプリセット">
+        <button class="preset active" data-preset="late-night" type="button"><b>Late Night</b><span>深夜の部屋</span></button>
+        <button class="preset" data-preset="rainy" type="button"><b>Rainy Window</b><span>雨と低い熱量</span></button>
+        <button class="preset" data-preset="sunset" type="button"><b>Sunset Walk</b><span>少し明るい夕方</span></button>
       </section>
-      <section class="now" aria-live="polite">
-        <div><span>KEY</span><strong id="key">C major</strong></div>
-        <div><span>BPM</span><strong id="bpm">76</strong></div>
-        <div><span>CHORD</span><strong id="chord">Cmaj7</strong></div>
+
+      <section class="dashboard">
+        <div class="controls" aria-label="生成設定">
+          <label><span><b>Energy</b><output>静 ↔ 動</output></span><input id="energy" type="range" min="0" max="100" value="32" /></label>
+          <label><span><b>Warmth</b><output>明 ↔ 暖</output></span><input id="warmth" type="range" min="0" max="100" value="76" /></label>
+          <label><span><b>Variation</b><output>反復 ↔ 変化</output></span><input id="variation" type="range" min="0" max="100" value="38" /></label>
+          <label><span><b>Texture</b><output>無音 ↔ 環境音</output></span><input id="texture" type="range" min="0" max="100" value="45" /></label>
+          <label><span><b>Volume</b><output>音量</output></span><input id="volume" type="range" min="0" max="100" value="72" /></label>
+        </div>
+
+        <section class="now" aria-live="polite">
+          <div class="wide"><span>NOW PLAYING</span><strong id="chord">Cmaj9</strong><small>next <i id="next-chord">Dm9</i></small></div>
+          <div><span>SECTION</span><strong id="section">INTRO</strong></div>
+          <div><span>BAR</span><strong id="bar">001</strong></div>
+          <div><span>KEY</span><strong id="key">C major / A minor</strong></div>
+          <div><span>BPM</span><strong id="bpm">72</strong></div>
+        </section>
       </section>
+
+      <footer>Everything is synthesized locally in your browser.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
