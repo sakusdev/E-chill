@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101713" />
+    <meta name="description" content="ブラウザで無限に生成されるチルミュージック" />
+    <title>E-chill — Endless generative chill</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <p class="eyebrow">ENDLESS GENERATIVE AUDIO</p>
+        <h1>E-chill</h1>
+        <p class="lead">同じ曲には、二度と戻らない。</p>
+      </header>
+      <section class="player" aria-label="音楽プレイヤー">
+        <div class="orb" id="orb" aria-hidden="true"><span></span></div>
+        <button id="toggle" class="toggle" type="button">再生する</button>
+        <p id="status" class="status">クリックして音を開始</p>
+      </section>
+      <section class="controls" aria-label="生成設定">
+        <label><span>Energy</span><input id="energy" type="range" min="0" max="100" value="32" /></label>
+        <label><span>Warmth</span><input id="warmth" type="range" min="0" max="100" value="76" /></label>
+        <label><span>Variation</span><input id="variation" type="range" min="0" max="100" value="38" /></label>
+      </section>
+      <section class="now" aria-live="polite">
+        <div><span>KEY</span><strong id="key">C major</strong></div>
+        <div><span>BPM</span><strong id="bpm">76</strong></div>
+        <div><span>CHORD</span><strong id="chord">Cmaj7</strong></div>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
